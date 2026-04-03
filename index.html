@@ -869,11 +869,11 @@ tailwind.config = {
 
 <script>
 // ============================================================
-// PERSISTENT DATABASE via window.storage API
+// PERSISTENT DATABASE via localStorage (works in any browser)
 // ============================================================
 const DB_KEY = 'civic_issues_v3';
 const APPEAL_THRESHOLD_DAYS = 7;
-const DUPLICATE_THRESHOLD_HOURS = 48; // same category + similar address within 48h = duplicate
+const DUPLICATE_THRESHOLD_HOURS = 48;
 
 let issues = [];
 let selectedIssueId = null;
@@ -884,26 +884,26 @@ let uploadedImageData = null;
 let pendingSubmitData = null;
 let adminTableFilter = 'all';
 
-// ---- STORAGE HELPERS ----
-async function dbLoad() {
+// ---- STORAGE HELPERS (synchronous localStorage, wrapped in Promise for API compatibility) ----
+function dbLoad() {
   try {
-    const result = await window.storage.get(DB_KEY);
-    issues = result ? JSON.parse(result.value) : [];
+    const raw = localStorage.getItem(DB_KEY);
+    issues = raw ? JSON.parse(raw) : [];
   } catch(e) {
-    // Key doesn't exist yet
     issues = [];
   }
-  return issues;
+  return Promise.resolve(issues);
 }
 
-async function dbSave(data) {
+function dbSave(data) {
   try {
-    await window.storage.set(DB_KEY, JSON.stringify(data));
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
     showStorageIndicator('Saved to database');
   } catch(e) {
     console.error('Storage save failed:', e);
     showStorageIndicator('Save failed!');
   }
+  return Promise.resolve();
 }
 
 function showStorageIndicator(msg) {
@@ -978,7 +978,11 @@ function showPage(page) {
     l.className = 'nav-link cursor-pointer transition-colors duration-200 ' + (active ? 'text-blue-700 border-b-2 border-blue-700 pb-1' : 'text-slate-500 hover:text-blue-800');
   });
   if (page === 'home') { dbLoad().then(updateHomeStats); }
-  if (page === 'track') { dbLoad().then(renderTrackIssues); }
+  if (page === 'track') { 
+    catFilter = 'all';
+    setCategoryFilter('all');
+    dbLoad().then(renderTrackIssues); 
+  }
   if (page === 'report') { setTimeout(initMapIfNeeded, 100); }
   if (page === 'admin') {
     if (adminLoggedIn) { document.getElementById('admin-login').classList.add('hidden'); document.getElementById('admin-dashboard').classList.remove('hidden'); dbLoad().then(updateAdminDashboard); }
@@ -1273,19 +1277,25 @@ function toggleSort() {
 }
 
 function renderTrackIssues() {
+  // Ensure issues are loaded from storage
+  if (!issues || issues.length === 0) {
+    dbLoad().then(() => renderTrackIssues());
+    return;
+  }
+  
+  // Default to true if elements not in DOM (e.g. called from another page)
   const search = (document.getElementById('track-search')?.value || '').toLowerCase();
-  const showPending = document.getElementById('filter-pending')?.checked;
-  const showInProgress = document.getElementById('filter-inprogress')?.checked;
-  const showResolved = document.getElementById('filter-resolved')?.checked;
-  const showAppealed = document.getElementById('filter-appealed')?.checked;
-  const showOverdue = document.getElementById('filter-overdue')?.checked;
+  const showPending    = document.getElementById('filter-pending')?.checked    ?? true;
+  const showInProgress = document.getElementById('filter-inprogress')?.checked ?? true;
+  const showResolved   = document.getElementById('filter-resolved')?.checked   ?? true;
+  const showAppealed   = document.getElementById('filter-appealed')?.checked   ?? false;
+  const showOverdue    = document.getElementById('filter-overdue')?.checked    ?? false;
 
   let filtered = issues.filter(i => {
     const statusOk = (i.status === 'Pending' && showPending) || (i.status === 'In Progress' && showInProgress) || (i.status === 'Resolved' && showResolved) || (i.appealed && showAppealed);
     const catOk = catFilter === 'all' || i.category === catFilter;
     const searchOk = !search || i.id.toLowerCase().includes(search) || i.category.toLowerCase().includes(search) || i.address.toLowerCase().includes(search) || i.description.toLowerCase().includes(search);
     const overdueOk = !showOverdue || isOverdue(i);
-    // Show if status filter passes OR overdue filter passes
     return (statusOk || (showOverdue && overdueOk)) && catOk && searchOk;
   });
 
