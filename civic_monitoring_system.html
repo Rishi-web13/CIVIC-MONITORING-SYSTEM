@@ -7,6 +7,8 @@
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 tailwind.config = {
   darkMode: "class",
@@ -204,24 +206,34 @@ tailwind.config = {
               <span class="material-symbols-outlined text-primary">location_on</span>
               <h2 class="font-headline text-2xl font-bold tracking-tight">Location</h2>
             </div>
-            <div class="space-y-6">
-              <div class="aspect-video w-full bg-surface-container rounded-xl overflow-hidden relative">
-                <div class="w-full h-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center">
-                  <div class="text-center">
-                    <span class="material-symbols-outlined text-primary mb-2 block" style="font-size:48px;font-variation-settings:'FILL' 1;">map</span>
-                    <p class="text-sm text-on-surface-variant font-medium">Interactive Map</p>
-                    <p class="text-xs text-outline mt-1">Click to select location on map</p>
-                  </div>
-                </div>
-                <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-primary/5">
-                  <button type="button" onclick="detectLocation()" class="bg-white px-4 py-2 rounded-md shadow-lg flex items-center gap-2 text-sm font-bold text-primary">
-                    <span class="material-symbols-outlined text-[18px]">my_location</span>Detect Location
-                  </button>
-                </div>
+            <div class="space-y-4">
+              <!-- Map controls bar -->
+              <div class="flex items-center gap-3">
+                <button type="button" onclick="detectLocation()" id="detect-btn" class="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-blue-800 transition-all active:scale-95 shadow-md shadow-primary/20">
+                  <span class="material-symbols-outlined text-[18px]">my_location</span> Detect My Location
+                </button>
+                <span class="text-xs text-on-surface-variant">or click anywhere on the map to pin</span>
               </div>
+
+              <!-- Leaflet Map -->
+              <div id="leaflet-map" class="w-full rounded-xl overflow-hidden border-2 border-outline-variant/30" style="height:320px;"></div>
+
+              <!-- Coordinates display -->
+              <div id="coords-display" class="hidden items-center gap-2 bg-secondary-container/40 text-on-secondary-container px-4 py-2 rounded-lg text-sm font-semibold">
+                <span class="material-symbols-outlined text-[16px]" style="font-variation-settings:'FILL' 1;">location_on</span>
+                <span id="coords-text">—</span>
+                <button type="button" onclick="clearMapPin()" class="ml-auto text-xs text-on-surface-variant hover:text-error transition-colors flex items-center gap-1">
+                  <span class="material-symbols-outlined text-[14px]">close</span> Clear
+                </button>
+              </div>
+
+              <!-- Address field -->
               <div class="relative">
-                <label class="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2 px-1">Manual Address</label>
-                <input id="r-address" class="w-full bg-surface-container-low border-none rounded-lg px-6 py-4 text-on-surface placeholder:text-outline/60 focus:ring-2 focus:ring-primary focus:bg-surface-container-lowest transition-all" placeholder="Enter street address, intersection, or landmark" type="text"/>
+                <label class="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2 px-1">Address / Landmark</label>
+                <input id="r-address" class="w-full bg-surface-container-low border-none rounded-lg px-6 py-4 text-on-surface placeholder:text-outline/60 focus:ring-2 focus:ring-primary focus:bg-surface-container-lowest transition-all" placeholder="Auto-filled from map, or type manually" type="text"/>
+                <div id="address-loading" class="hidden absolute right-4 top-[2.6rem]">
+                  <div class="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                </div>
               </div>
             </div>
           </section>
@@ -786,6 +798,7 @@ function showPage(page) {
 
   if (page === 'home') updateHomeStats();
   if (page === 'track') { renderTrackIssues(); }
+  if (page === 'report') { setTimeout(initMapIfNeeded, 100); }
   if (page === 'admin') {
     if (adminLoggedIn) { document.getElementById('admin-login').classList.add('hidden'); document.getElementById('admin-dashboard').classList.remove('hidden'); updateAdminDashboard(); }
     else { document.getElementById('admin-login').classList.remove('hidden'); document.getElementById('admin-dashboard').classList.add('hidden'); }
@@ -908,16 +921,165 @@ function removeImage() {
   document.getElementById('r-file').value = '';
 }
 
-function detectLocation() {
-  if (navigator.geolocation) {
-    showToast('Detecting location...', 'info');
-    navigator.geolocation.getCurrentPosition(pos => {
-      document.getElementById('r-address').value = `Lat: ${pos.coords.latitude.toFixed(4)}, Lng: ${pos.coords.longitude.toFixed(4)}`;
-      showToast('Location detected!', 'success');
-    }, () => {
-      document.getElementById('r-address').value = 'Main Street, Downtown District';
-      showToast('Used approximate location.', 'info');
+// ============================================================
+// LEAFLET MAP
+// ============================================================
+let reportMap = null;
+let reportMarker = null;
+let mapInitialized = false;
+
+function initMap(lat, lng) {
+  if (reportMap) {
+    reportMap.remove();
+    reportMap = null;
+    reportMarker = null;
+  }
+
+  reportMap = L.map('leaflet-map', { zoomControl: true, scrollWheelZoom: true }).setView([lat, lng], 15);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(reportMap);
+
+  // Custom blue marker
+  const blueIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:32px;height:32px;background:#0040a1;border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,64,161,0.4);"></div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -36]
+  });
+
+  reportMarker = L.marker([lat, lng], { icon: blueIcon, draggable: true }).addTo(reportMap);
+  reportMarker.bindPopup('<b>Issue Location</b><br>Drag to adjust').openPopup();
+
+  // Update address when marker is dragged
+  reportMarker.on('dragend', function(e) {
+    const pos = e.target.getLatLng();
+    reverseGeocode(pos.lat, pos.lng);
+    showCoordsDisplay(pos.lat, pos.lng);
+  });
+
+  // Click map to move marker
+  reportMap.on('click', function(e) {
+    reportMarker.setLatLng(e.latlng);
+    reverseGeocode(e.latlng.lat, e.latlng.lng);
+    showCoordsDisplay(e.latlng.lat, e.latlng.lng);
+    reportMarker.openPopup();
+  });
+
+  showCoordsDisplay(lat, lng);
+  reverseGeocode(lat, lng);
+  mapInitialized = true;
+}
+
+function showCoordsDisplay(lat, lng) {
+  const display = document.getElementById('coords-display');
+  document.getElementById('coords-text').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)} — pinned`;
+  display.classList.remove('hidden');
+  display.classList.add('flex');
+}
+
+function reverseGeocode(lat, lng) {
+  const loadingEl = document.getElementById('address-loading');
+  loadingEl.classList.remove('hidden');
+  fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`)
+    .then(r => r.json())
+    .then(data => {
+      loadingEl.classList.add('hidden');
+      if (data && data.display_name) {
+        const addr = data.address;
+        const short = [
+          addr.road || addr.pedestrian || addr.footway,
+          addr.suburb || addr.neighbourhood || addr.quarter,
+          addr.city || addr.town || addr.village || addr.county,
+          addr.state
+        ].filter(Boolean).join(', ');
+        document.getElementById('r-address').value = short || data.display_name;
+      }
+    })
+    .catch(() => {
+      loadingEl.classList.add('hidden');
     });
+}
+
+function detectLocation() {
+  const btn = document.getElementById('detect-btn');
+  btn.innerHTML = '<span class="material-symbols-outlined text-[18px] animate-spin">autorenew</span> Detecting...';
+  btn.disabled = true;
+
+  if (!navigator.geolocation) {
+    showToast('Geolocation not supported by your browser.', 'warning');
+    btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">my_location</span> Detect My Location';
+    btn.disabled = false;
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      btn.innerHTML = '<span class="material-symbols-outlined text-[18px]" style="font-variation-settings:\'FILL\' 1;">location_on</span> Location Found';
+      btn.disabled = false;
+      initMap(latitude, longitude);
+      showToast('Location detected successfully!', 'success');
+      setTimeout(() => {
+        btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">my_location</span> Detect My Location';
+      }, 3000);
+    },
+    (err) => {
+      btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">my_location</span> Detect My Location';
+      btn.disabled = false;
+      // Fallback to a default city center if denied
+      initMap(17.3850, 78.4867); // Hyderabad default
+      showToast('Using approximate location. Grant permission for exact location.', 'info');
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
+function clearMapPin() {
+  if (reportMarker) {
+    reportMap.removeLayer(reportMarker);
+    reportMarker = null;
+  }
+  document.getElementById('r-address').value = '';
+  document.getElementById('coords-display').classList.add('hidden');
+  document.getElementById('coords-display').classList.remove('flex');
+}
+
+// Auto-init map when report page becomes visible
+function initMapIfNeeded() {
+  if (!mapInitialized && document.getElementById('leaflet-map')) {
+    // Start with a default view, user can detect or click
+    const map = L.map('leaflet-map', { zoomControl: true }).setView([20.5937, 78.9629], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19
+    }).addTo(map);
+
+    // Show India overview with click-to-pin
+    map.on('click', function(e) {
+      if (!reportMap) { reportMap = map; }
+      const blueIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:32px;height:32px;background:#0040a1;border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,64,161,0.4);"></div>`,
+        iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -36]
+      });
+      if (reportMarker) map.removeLayer(reportMarker);
+      reportMarker = L.marker(e.latlng, { icon: blueIcon, draggable: true }).addTo(map);
+      reportMarker.bindPopup('<b>Issue Location</b><br>Drag to adjust').openPopup();
+      reportMarker.on('dragend', function(ev) {
+        const pos = ev.target.getLatLng();
+        reverseGeocode(pos.lat, pos.lng);
+        showCoordsDisplay(pos.lat, pos.lng);
+      });
+      reverseGeocode(e.latlng.lat, e.latlng.lng);
+      showCoordsDisplay(e.latlng.lat, e.latlng.lng);
+      map.setView(e.latlng, 15);
+    });
+    reportMap = map;
+    mapInitialized = true;
   }
 }
 
@@ -953,7 +1115,12 @@ function resetForm() {
   document.getElementById('upload-zone').style.opacity = '1';
   document.getElementById('r-file').value = '';
   document.getElementById('form-success').classList.add('hidden');
+  // Reset map
+  if (reportMap) { reportMap.remove(); reportMap = null; reportMarker = null; mapInitialized = false; }
+  document.getElementById('coords-display').classList.add('hidden');
+  document.getElementById('coords-display').classList.remove('flex');
   goToStep1();
+  setTimeout(initMapIfNeeded, 100);
 }
 
 // ============================================================
