@@ -9,7 +9,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <script>
 tailwind.config = {
   darkMode: "class",
@@ -755,104 +754,28 @@ tailwind.config = {
 
 <script>
 // ============================================================
-// SUPABASE DATABASE SETUP
-// ============================================================
-// IMPORTANT: Set up a free Supabase project at https://supabase.com
-// Create a .env.local file or update these variables with your project details:
-const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
-
-let supabase = null;
-let dbReady = false;
-
-// Initialize Supabase
-try {
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  // Test connection
-  supabase.from('issues').select('id').limit(1).then(() => {
-    dbReady = true;
-    console.log('✓ Database connected');
-  }).catch(e => {
-    console.warn('Database not configured. Using local storage fallback. Configure Supabase to enable persistence across browser sessions.');
-    dbReady = false;
-  });
-} catch(e) {
-  console.warn('Supabase not available. Using local storage fallback.');
-  dbReady = false;
-}
-
-// ============================================================
-// DATA STORE (Supabase + localStorage fallback)
+// DATA STORE (in-memory, persists via sessionStorage)
 // ============================================================
 const STORAGE_KEY = 'civic_issues_v2';
 
-async function loadIssues() {
-  if (dbReady) {
-    try {
-      const { data, error } = await supabase.from('issues').select('*').order('timestamp', { ascending: false });
-      return error ? getSeedData() : (data || getSeedData());
-    } catch(e) {
-      return getSeedData();
-    }
-  }
-  // Fallback to localStorage
+function loadIssues() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : getSeedData();
   } catch(e) { return getSeedData(); }
 }
 
-async function saveIssues(issues) {
-  if (dbReady) {
-    try {
-      for (const issue of issues) {
-        const { error } = await supabase.from('issues').upsert({
-          id: issue.id,
-          category: issue.category,
-          address: issue.address,
-          description: issue.description,
-          status: issue.status,
-          priority: issue.priority,
-          name: issue.name,
-          note: issue.note,
-          image: issue.image,
-          timestamp: issue.timestamp,
-          appeals: issue.appeals || 0
-        }, { onConflict: 'id' });
-        if (error) throw error;
-      }
-    } catch(e) {
-      console.warn('Failed to sync with database, saving locally:', e);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(issues));
-    }
-  } else {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(issues));
-  }
-}
-
-async function addIssue(newIssue) {
-  if (dbReady) {
-    try {
-      const { error } = await supabase.from('issues').insert([newIssue]);
-      if (error) throw error;
-    } catch(e) {
-      console.warn('Failed to save to database, saving locally:', e);
-      const issues = await loadIssues();
-      issues.unshift(newIssue);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(issues));
-    }
-  } else {
-    const issues = await loadIssues();
-    issues.unshift(newIssue);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(issues));
-  }
+function saveIssues(issues) {
+  try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(issues)); } catch(e) {}
 }
 
 function getSeedData() {
   return [];
 }
 
-let issues = [];
+// Init — clear any old demo data from previous sessions
+sessionStorage.removeItem(STORAGE_KEY);
+let issues = loadIssues();
 let selectedIssueId = null;
 let sortNewest = true;
 let catFilter = 'all';
@@ -886,29 +809,26 @@ function showPage(page) {
 // HOME
 // ============================================================
 function updateHomeStats() {
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const total = issues.length;
-    const resolved = issues.filter(i => i.status === 'Resolved').length;
-    const rate = total > 0 ? Math.round(resolved / total * 100) : 0;
-    document.getElementById('stat-total').textContent = total.toLocaleString();
-    document.getElementById('stat-rate').textContent = rate + '%';
+  const total = issues.length;
+  const resolved = issues.filter(i => i.status === 'Resolved').length;
+  const rate = total > 0 ? Math.round(resolved / total * 100) : 0;
+  document.getElementById('stat-total').textContent = total.toLocaleString();
+  document.getElementById('stat-rate').textContent = rate + '%';
 
-    const latest = [...issues].sort((a,b) => b.timestamp - a.timestamp)[0];
-    if (latest) {
-      const heroEl = document.getElementById('hero-latest');
-      const icon = latest.status === 'Resolved' ? 'check_circle' : 'pending';
-      const color = latest.status === 'Resolved' ? 'bg-secondary-container text-on-secondary-container' : 'bg-primary-fixed text-primary';
-      heroEl.innerHTML = `
-        <div class="w-12 h-12 rounded-full ${color} flex items-center justify-center">
-          <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1;">${icon}</span>
-        </div>
-        <div>
-          <p class="text-sm font-bold text-on-surface">${latest.category} - ${latest.status}</p>
-          <p class="text-xs text-on-surface-variant">${latest.address} · ${timeAgo(latest.timestamp)}</p>
-        </div>`;
-    }
-  });
+  const latest = [...issues].sort((a,b) => b.timestamp - a.timestamp)[0];
+  if (latest) {
+    const heroEl = document.getElementById('hero-latest');
+    const icon = latest.status === 'Resolved' ? 'check_circle' : 'pending';
+    const color = latest.status === 'Resolved' ? 'bg-secondary-container text-on-secondary-container' : 'bg-primary-fixed text-primary';
+    heroEl.innerHTML = `
+      <div class="w-12 h-12 rounded-full ${color} flex items-center justify-center">
+        <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1;">${icon}</span>
+      </div>
+      <div>
+        <p class="text-sm font-bold text-on-surface">${latest.category} - ${latest.status}</p>
+        <p class="text-xs text-on-surface-variant">${latest.address} · ${timeAgo(latest.timestamp)}</p>
+      </div>`;
+  }
 }
 
 // ============================================================
@@ -983,11 +903,7 @@ function updateStepUI() {
 function handleFileUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
-  const MAX_SIZE = 1 * 1024 * 1024; // 1MB max
-  if (file.size > MAX_SIZE) { 
-    showToast('File too large. Maximum file size is 1MB.', 'warning'); 
-    return; 
-  }
+  if (file.size > 10 * 1024 * 1024) { showToast('File too large. Max 10MB.', 'warning'); return; }
   const reader = new FileReader();
   reader.onload = (e) => {
     uploadedImageData = e.target.result;
@@ -1178,14 +1094,14 @@ function submitReport() {
     name: document.getElementById('r-name').value || 'Anonymous',
     note: '',
     image: uploadedImageData,
-    timestamp: Date.now(),
-    appeals: 0
+    timestamp: Date.now()
   };
-  addIssue(newIssue);
+  issues.unshift(newIssue);
+  saveIssues(issues);
   document.getElementById('success-id').textContent = '#' + newIssue.id;
   document.getElementById('form-step-3').classList.add('hidden');
   document.getElementById('form-success').classList.remove('hidden');
-  showToast('Report submitted successfully! Your issue is now visible to everyone.', 'success');
+  showToast('Report submitted successfully!', 'success');
 }
 
 function resetForm() {
@@ -1227,32 +1143,30 @@ function toggleSort() {
 }
 
 function renderTrackIssues() {
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const search = (document.getElementById('track-search')?.value || '').toLowerCase();
-    const showPending = document.getElementById('filter-pending')?.checked;
-    const showInProgress = document.getElementById('filter-inprogress')?.checked;
-    const showResolved = document.getElementById('filter-resolved')?.checked;
+  issues = loadIssues();
+  const search = (document.getElementById('track-search')?.value || '').toLowerCase();
+  const showPending = document.getElementById('filter-pending')?.checked;
+  const showInProgress = document.getElementById('filter-inprogress')?.checked;
+  const showResolved = document.getElementById('filter-resolved')?.checked;
 
-    let filtered = issues.filter(i => {
-      const statusOk = (i.status === 'Pending' && showPending) || (i.status === 'In Progress' && showInProgress) || (i.status === 'Resolved' && showResolved);
-      const catOk = catFilter === 'all' || i.category === catFilter;
-      const searchOk = !search || i.id.toLowerCase().includes(search) || i.category.toLowerCase().includes(search) || i.address.toLowerCase().includes(search) || i.description.toLowerCase().includes(search);
-      return statusOk && catOk && searchOk;
-    });
-
-    filtered.sort((a,b) => sortNewest ? b.timestamp - a.timestamp : a.timestamp - b.timestamp);
-
-    document.getElementById('track-count').textContent = `Showing ${filtered.length} Issue${filtered.length !== 1 ? 's' : ''}`;
-    const grid = document.getElementById('track-grid');
-
-    if (filtered.length === 0) {
-      grid.innerHTML = '<div class="col-span-2 text-center py-16 text-on-surface-variant"><span class="material-symbols-outlined mb-3 block" style="font-size:48px;">search_off</span><p class="font-semibold">No issues found matching your filters.</p></div>';
-      return;
-    }
-
-    grid.innerHTML = filtered.map(issue => issueCard(issue)).join('');
+  let filtered = issues.filter(i => {
+    const statusOk = (i.status === 'Pending' && showPending) || (i.status === 'In Progress' && showInProgress) || (i.status === 'Resolved' && showResolved);
+    const catOk = catFilter === 'all' || i.category === catFilter;
+    const searchOk = !search || i.id.toLowerCase().includes(search) || i.category.toLowerCase().includes(search) || i.address.toLowerCase().includes(search) || i.description.toLowerCase().includes(search);
+    return statusOk && catOk && searchOk;
   });
+
+  filtered.sort((a,b) => sortNewest ? b.timestamp - a.timestamp : a.timestamp - b.timestamp);
+
+  document.getElementById('track-count').textContent = `Showing ${filtered.length} Issue${filtered.length !== 1 ? 's' : ''}`;
+  const grid = document.getElementById('track-grid');
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div class="col-span-2 text-center py-16 text-on-surface-variant"><span class="material-symbols-outlined mb-3 block" style="font-size:48px;">search_off</span><p class="font-semibold">No issues found matching your filters.</p></div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(issue => issueCard(issue)).join('');
 }
 
 function getStatusBadge(status) {
@@ -1267,14 +1181,6 @@ function issueCard(issue) {
   const isUrgent = issue.priority === 'Urgent' || issue.priority === 'High';
   const urgentClass = isUrgent && issue.status === 'Pending' ? 'border-l-4 border-primary bg-primary-fixed-dim/10' : 'bg-surface-container-lowest';
   const imgHtml = issue.image ? `<div class="h-40 overflow-hidden -mx-6 -mt-6 mb-6 rounded-t-xl"><img src="${issue.image}" class="w-full h-full object-cover"/></div>` : '';
-  
-  // Check if issue can be appealed (not resolved AND older than 30 days)
-  const daysSinceSubmit = Math.floor((Date.now() - issue.timestamp) / (1000 * 60 * 60 * 24));
-  const canAppeal = issue.status !== 'Resolved' && daysSinceSubmit >= 30;
-  const appealBtn = canAppeal ? `<button onclick="appealIssue('${issue.id}')" class="mt-4 w-full bg-error text-white px-4 py-2 rounded-lg font-semibold text-sm hover:opacity-90 transition-all flex items-center justify-center gap-2 active:scale-95">
-    <span class="material-symbols-outlined text-sm">flag</span> Appeal Again (${daysSinceSubmit} days, still unresolved)
-  </button>` : '';
-  
   return `<div class="group ${urgentClass} p-6 rounded-xl transition-all duration-300 hover:shadow-[0_16px_40px_rgba(178,197,255,0.1)] fade-in">
     ${imgHtml}
     <div class="flex justify-between items-start mb-4">
@@ -1291,25 +1197,7 @@ function issueCard(issue) {
         <span class="material-symbols-outlined text-sm">schedule</span>${timeAgo(issue.timestamp)}
       </div>
     </div>
-    ${appealBtn}
   </div>`;
-}
-
-function appealIssue(issueId) {
-  if (!confirm('Are you sure you want to appeal this issue? This will notify authorities to review it again.')) return;
-  
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const idx = issues.findIndex(i => i.id === issueId);
-    if (idx < 0) { showToast('Issue not found.', 'error'); return; }
-    
-    issues[idx].appeals = (issues[idx].appeals || 0) + 1;
-    issues[idx].timestamp = Date.now(); // Reset timestamp to move to top when sorted
-    saveIssues(issues);
-    
-    showToast(`✓ Appeal submitted! (Appeal #${issues[idx].appeals})`, 'success');
-    renderTrackIssues();
-  });
 }
 
 // ============================================================
@@ -1417,84 +1305,78 @@ function adminLogout() {
 }
 
 function updateAdminDashboard() {
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const total = issues.length;
-    const pending = issues.filter(i => i.status === 'Pending').length;
-    const resolved = issues.filter(i => i.status === 'Resolved').length;
-    const rate = total > 0 ? Math.round(resolved / total * 100) : 0;
-    document.getElementById('admin-stat-total').textContent = total;
-    document.getElementById('admin-stat-pending').textContent = pending;
-    document.getElementById('admin-stat-resolved').textContent = resolved;
-    document.getElementById('admin-stat-rate').textContent = rate + '% success rate';
-    renderAdminTable();
-  });
+  issues = loadIssues();
+  const total = issues.length;
+  const pending = issues.filter(i => i.status === 'Pending').length;
+  const resolved = issues.filter(i => i.status === 'Resolved').length;
+  const rate = total > 0 ? Math.round(resolved / total * 100) : 0;
+  document.getElementById('admin-stat-total').textContent = total;
+  document.getElementById('admin-stat-pending').textContent = pending;
+  document.getElementById('admin-stat-resolved').textContent = resolved;
+  document.getElementById('admin-stat-rate').textContent = rate + '% success rate';
+  renderAdminTable();
 }
 
 function renderAdminTable() {
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const search = (document.getElementById('admin-search')?.value || '').toLowerCase();
-    let filtered = issues.filter(i =>
-      !search || i.id.toLowerCase().includes(search) || i.address.toLowerCase().includes(search) || i.category.toLowerCase().includes(search)
-    );
-    filtered.sort((a,b) => b.timestamp - a.timestamp);
+  issues = loadIssues();
+  const search = (document.getElementById('admin-search')?.value || '').toLowerCase();
+  let filtered = issues.filter(i =>
+    !search || i.id.toLowerCase().includes(search) || i.address.toLowerCase().includes(search) || i.category.toLowerCase().includes(search)
+  );
+  filtered.sort((a,b) => b.timestamp - a.timestamp);
 
-    const body = document.getElementById('admin-table-body');
-    if (filtered.length === 0) {
-      body.innerHTML = '<tr><td colspan="7" class="text-center py-12 text-on-surface-variant">No reports found.</td></tr>';
-      return;
-    }
+  const body = document.getElementById('admin-table-body');
+  if (filtered.length === 0) {
+    body.innerHTML = '<tr><td colspan="7" class="text-center py-12 text-on-surface-variant">No reports found.</td></tr>';
+    return;
+  }
 
-    body.innerHTML = filtered.map(issue => {
-      const badge = getStatusBadge(issue.status);
-      const priColor = issue.priority === 'Urgent' ? 'text-error font-bold' : issue.priority === 'High' ? 'text-tertiary font-semibold' : 'text-on-surface-variant';
-      return `<tr class="hover:bg-surface-container-lowest transition-colors cursor-pointer group" onclick="openDetail('${issue.id}')">
-        <td class="px-6 py-5 font-headline font-bold text-sm text-primary">#${issue.id}</td>
-        <td class="px-6 py-5 text-sm font-medium">${issue.category}</td>
-        <td class="px-6 py-5 text-sm text-on-surface-variant">${issue.address}</td>
-        <td class="px-6 py-5"><div class="flex justify-center"><span class="px-3 py-1 ${badge} text-[10px] font-bold rounded-full uppercase tracking-tighter">${issue.status}</span></div></td>
-        <td class="px-6 py-5 text-sm ${priColor}">${issue.priority}</td>
-        <td class="px-6 py-5 text-sm text-on-surface-variant">${timeAgo(issue.timestamp)}</td>
-        <td class="px-6 py-5 text-right"><button class="p-2 hover:bg-surface-container text-on-surface-variant rounded-lg" onclick="event.stopPropagation();openDetail('${issue.id}')"><span class="material-symbols-outlined">open_in_new</span></button></td>
-      </tr>`;
-    }).join('');
-  });
+  body.innerHTML = filtered.map(issue => {
+    const badge = getStatusBadge(issue.status);
+    const priColor = issue.priority === 'Urgent' ? 'text-error font-bold' : issue.priority === 'High' ? 'text-tertiary font-semibold' : 'text-on-surface-variant';
+    return `<tr class="hover:bg-surface-container-lowest transition-colors cursor-pointer group" onclick="openDetail('${issue.id}')">
+      <td class="px-6 py-5 font-headline font-bold text-sm text-primary">#${issue.id}</td>
+      <td class="px-6 py-5 text-sm font-medium">${issue.category}</td>
+      <td class="px-6 py-5 text-sm text-on-surface-variant">${issue.address}</td>
+      <td class="px-6 py-5"><div class="flex justify-center"><span class="px-3 py-1 ${badge} text-[10px] font-bold rounded-full uppercase tracking-tighter">${issue.status}</span></div></td>
+      <td class="px-6 py-5 text-sm ${priColor}">${issue.priority}</td>
+      <td class="px-6 py-5 text-sm text-on-surface-variant">${timeAgo(issue.timestamp)}</td>
+      <td class="px-6 py-5 text-right"><button class="p-2 hover:bg-surface-container text-on-surface-variant rounded-lg" onclick="event.stopPropagation();openDetail('${issue.id}')"><span class="material-symbols-outlined">open_in_new</span></button></td>
+    </tr>`;
+  }).join('');
 }
 
 function openDetail(id) {
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const issue = issues.find(i => i.id === id);
-    if (!issue) return;
-    selectedIssueId = id;
+  issues = loadIssues();
+  const issue = issues.find(i => i.id === id);
+  if (!issue) return;
+  selectedIssueId = id;
 
-    document.getElementById('d-id').textContent = '#' + issue.id;
-    document.getElementById('d-name').textContent = issue.name || 'Anonymous';
-    document.getElementById('d-address').textContent = issue.address;
-    document.getElementById('d-cat').textContent = issue.category;
-    document.getElementById('d-desc').textContent = issue.description;
-    document.getElementById('d-priority').textContent = issue.priority;
-    document.getElementById('d-time').textContent = new Date(issue.timestamp).toLocaleString();
-    document.getElementById('d-note').value = issue.note || '';
+  document.getElementById('d-id').textContent = '#' + issue.id;
+  document.getElementById('d-name').textContent = issue.name || 'Anonymous';
+  document.getElementById('d-address').textContent = issue.address;
+  document.getElementById('d-cat').textContent = issue.category;
+  document.getElementById('d-desc').textContent = issue.description;
+  document.getElementById('d-priority').textContent = issue.priority;
+  document.getElementById('d-time').textContent = new Date(issue.timestamp).toLocaleString();
+  document.getElementById('d-note').value = issue.note || '';
 
-    if (issue.image) {
-      document.getElementById('detail-img').src = issue.image;
-      document.getElementById('detail-img-wrap').classList.remove('hidden');
-    } else {
-      document.getElementById('detail-img-wrap').classList.add('hidden');
-    }
+  if (issue.image) {
+    document.getElementById('detail-img').src = issue.image;
+    document.getElementById('detail-img-wrap').classList.remove('hidden');
+  } else {
+    document.getElementById('detail-img-wrap').classList.add('hidden');
+  }
 
-    // Highlight active status
-    document.querySelectorAll('.status-btn').forEach(b => {
-      const isActive = b.dataset.status === issue.status;
-      b.className = 'status-btn px-6 py-3 rounded-xl text-sm font-bold flex items-center gap-2 transition-all border-2 ' +
-        (isActive ? 'bg-primary text-white border-primary ring-4 ring-primary/20' : 'border-surface-container-highest hover:bg-surface-container-low');
-    });
-
-    document.getElementById('admin-detail-panel').classList.remove('hidden');
-    document.getElementById('admin-detail-panel').scrollIntoView({ behavior: 'smooth' });
+  // Highlight active status
+  document.querySelectorAll('.status-btn').forEach(b => {
+    const isActive = b.dataset.status === issue.status;
+    b.className = 'status-btn px-6 py-3 rounded-xl text-sm font-bold flex items-center gap-2 transition-all border-2 ' +
+      (isActive ? 'bg-primary text-white border-primary ring-4 ring-primary/20' : 'border-surface-container-highest hover:bg-surface-container-low');
   });
+
+  document.getElementById('admin-detail-panel').classList.remove('hidden');
+  document.getElementById('admin-detail-panel').scrollIntoView({ behavior: 'smooth' });
 }
 
 function closeDetail() {
@@ -1504,62 +1386,54 @@ function closeDetail() {
 
 function updateStatus(newStatus) {
   if (!selectedIssueId) return;
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const idx = issues.findIndex(i => i.id === selectedIssueId);
-    if (idx < 0) return;
-    issues[idx].status = newStatus;
-    saveIssues(issues);
-    showToast(`Status updated to "${newStatus}"`, 'success');
-    openDetail(selectedIssueId);
-    updateAdminDashboard();
-  });
+  issues = loadIssues();
+  const idx = issues.findIndex(i => i.id === selectedIssueId);
+  if (idx < 0) return;
+  issues[idx].status = newStatus;
+  saveIssues(issues);
+  showToast(`Status updated to "${newStatus}"`, 'success');
+  openDetail(selectedIssueId);
+  updateAdminDashboard();
 }
 
 function saveAdminNote() {
   if (!selectedIssueId) return;
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const idx = issues.findIndex(i => i.id === selectedIssueId);
-    if (idx < 0) return;
-    issues[idx].note = document.getElementById('d-note').value;
-    saveIssues(issues);
-    showToast('Changes saved.', 'success');
-    updateAdminDashboard();
-  });
+  issues = loadIssues();
+  const idx = issues.findIndex(i => i.id === selectedIssueId);
+  if (idx < 0) return;
+  issues[idx].note = document.getElementById('d-note').value;
+  saveIssues(issues);
+  showToast('Changes saved.', 'success');
+  updateAdminDashboard();
 }
 
 function deleteIssue() {
   if (!selectedIssueId) return;
   if (!confirm('Are you sure you want to delete this report?')) return;
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues.filter(i => i.id !== selectedIssueId);
-    saveIssues(issues);
-    selectedIssueId = null;
-    closeDetail();
-    updateAdminDashboard();
-    showToast('Report deleted.', 'info');
-  });
+  issues = loadIssues();
+  issues = issues.filter(i => i.id !== selectedIssueId);
+  saveIssues(issues);
+  selectedIssueId = null;
+  closeDetail();
+  updateAdminDashboard();
+  showToast('Report deleted.', 'info');
 }
 
 function exportData() {
-  loadIssues().then(loadedIssues => {
-    issues = loadedIssues;
-    const headers = ['ID','Category','Address','Status','Priority','Reporter','Description','Submitted','Appeals'];
-    const rows = issues.map(i => [
-      i.id, i.category, i.address, i.status, i.priority, i.name,
-      '"' + i.description.replace(/"/g,'""') + '"',
-      new Date(i.timestamp).toLocaleString(),
-      i.appeals || 0
-    ]);
-    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'civic_reports_' + Date.now() + '.csv';
-    a.click();
-    showToast('CSV exported!', 'success');
-  });
+  issues = loadIssues();
+  const headers = ['ID','Category','Address','Status','Priority','Reporter','Description','Submitted'];
+  const rows = issues.map(i => [
+    i.id, i.category, i.address, i.status, i.priority, i.name,
+    '"' + i.description.replace(/"/g,'""') + '"',
+    new Date(i.timestamp).toLocaleString()
+  ]);
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'civic_reports_' + Date.now() + '.csv';
+  a.click();
+  showToast('CSV exported!', 'success');
 }
 
 // ============================================================
@@ -1590,10 +1464,7 @@ function showToast(msg, type='success') {
 }
 
 // Init
-loadIssues().then(data => {
-  issues = data;
-  showPage('home');
-});
+showPage('home');
 </script>
 </body>
 </html>
