@@ -84,13 +84,13 @@ tailwind.config = {
     </div>
     <div id="duplicate-content" class="bg-surface-container-low rounded-xl p-4 mb-6 space-y-2">
     </div>
-    <p class="text-sm text-on-surface-variant mb-6 leading-relaxed">A similar issue was already reported at a nearby location. Submitting duplicates slows down resolution. Would you like to add your report anyway or track the existing one?</p>
+    <p class="text-sm text-on-surface-variant mb-6 leading-relaxed">A similar issue was already reported at a nearby location. Help accelerate resolution by appealing the existing issue to raise it with authorities.</p>
     <div class="flex gap-3">
       <button onclick="closeDuplicateModal(); showPage('track')" class="flex-1 bg-surface-container-high py-3 rounded-xl font-bold text-sm hover:bg-surface-container-highest transition-all">
         Track Existing Issue
       </button>
-      <button onclick="closeDuplicateModal(); proceedWithSubmit()" class="flex-1 bg-primary text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-800 transition-all">
-        Submit Anyway
+      <button onclick="appealDuplicateIssue()" class="flex-1 bg-primary text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-800 transition-all">
+        Appeal Again
       </button>
     </div>
   </div>
@@ -872,7 +872,7 @@ tailwind.config = {
 // PERSISTENT DATABASE via localStorage (works in any browser)
 // ============================================================
 const DB_KEY = 'civic_issues_v3';
-const APPEAL_THRESHOLD_DAYS = 7;
+const APPEAL_THRESHOLD_DAYS = 10;
 const DUPLICATE_THRESHOLD_HOURS = 48;
 
 let issues = [];
@@ -882,6 +882,7 @@ let catFilter = 'all';
 let adminLoggedIn = false;
 let uploadedImageData = null;
 let pendingSubmitData = null;
+let pendingDuplicateId = null;
 let adminTableFilter = 'all';
 
 // ---- STORAGE HELPERS (synchronous localStorage, wrapped in Promise for API compatibility) ----
@@ -958,6 +959,14 @@ async function appealIssue(id) {
   await dbLoad();
   const idx = issues.findIndex(i => i.id === id);
   if (idx < 0) return;
+  const issue = issues[idx];
+  const daysSinceLastAppeal = issue.lastAppealAt ? Math.floor((Date.now() - issue.lastAppealAt) / (1000 * 60 * 60 * 24)) : APPEAL_THRESHOLD_DAYS;
+  
+  if (issue.appealed && daysSinceLastAppeal < APPEAL_THRESHOLD_DAYS) {
+    showToast(`You can appeal again in ${APPEAL_THRESHOLD_DAYS - daysSinceLastAppeal} days.`, 'warning');
+    return;
+  }
+  
   issues[idx].appealed = true;
   issues[idx].appealCount = (issues[idx].appealCount || 0) + 1;
   issues[idx].lastAppealAt = Date.now();
@@ -1102,6 +1111,7 @@ async function checkDuplicateAndSubmit() {
   const duplicate = findDuplicate(newIssuePreview);
   if (duplicate) {
     // Show duplicate modal
+    const appealCountDisplay = duplicate.appealCount > 0 ? `<span class="ml-auto text-error font-bold">${duplicate.appealCount} appeal${duplicate.appealCount !== 1 ? 's' : ''}</span>` : '';
     document.getElementById('duplicate-content').innerHTML = `
       <div class="flex items-center gap-2 mb-2">
         <span class="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Existing Report</span>
@@ -1110,8 +1120,13 @@ async function checkDuplicateAndSubmit() {
       <p class="font-bold text-sm text-on-surface">${duplicate.category}</p>
       <p class="text-xs text-on-surface-variant">${duplicate.address}</p>
       <p class="text-xs text-on-surface-variant mt-1">Reported ${timeAgo(duplicate.timestamp)} — ID: #${duplicate.id}</p>
+      <div class="flex items-center gap-2 mt-2 text-xs text-on-surface-variant">
+        <span class="material-symbols-outlined text-[14px]" style="font-variation-settings:'FILL' 1;">campaign</span>
+        ${appealCountDisplay || 'No appeals yet'}
+      </div>
     `;
     pendingSubmitData = newIssuePreview;
+    pendingDuplicateId = duplicate.id;
     document.getElementById('duplicate-modal').classList.add('show');
   } else {
     proceedWithSubmit();
@@ -1120,6 +1135,25 @@ async function checkDuplicateAndSubmit() {
 
 function closeDuplicateModal() {
   document.getElementById('duplicate-modal').classList.remove('show');
+}
+
+async function appealDuplicateIssue() {
+  if (!pendingDuplicateId) return;
+  closeDuplicateModal();
+  await dbLoad();
+  const idx = issues.findIndex(i => i.id === pendingDuplicateId);
+  if (idx < 0) return;
+  issues[idx].appealed = true;
+  issues[idx].appealCount = (issues[idx].appealCount || 0) + 1;
+  issues[idx].lastAppealAt = Date.now();
+  await dbSave(issues);
+  resetForm();
+  showToast('Appeal submitted! The existing issue has been escalated to senior authorities.', 'success');
+  setTimeout(() => {
+    catFilter = 'all';
+    setCategoryFilter('all');
+    showPage('track');
+  }, 1500);
 }
 
 async function proceedWithSubmit() {
@@ -1340,15 +1374,20 @@ function issueCard(issue) {
         </button>
       </div>`;
   } else if (issue.appealed) {
+    let appealButton = '';
+    const daysSinceLastAppeal = issue.lastAppealAt ? Math.floor((Date.now() - issue.lastAppealAt) / (1000 * 60 * 60 * 24)) : APPEAL_THRESHOLD_DAYS;
+    if (issue.appealed && daysSinceLastAppeal >= APPEAL_THRESHOLD_DAYS) {
+      appealButton = `<button onclick="appealIssue('${issue.id}')" class="mt-2 w-full bg-error-container text-error px-2 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 hover:bg-error/20 transition-all active:scale-95"><span class="material-symbols-outlined text-[14px]" style="font-variation-settings:'FILL' 1;">campaign</span>Appeal Again</button>`;
+    }
     appealHtml = `
       <div class="mt-4 pt-4 border-t border-error/10">
         <div class="flex items-center gap-2 bg-error-container/40 px-3 py-2 rounded-lg">
           <span class="material-symbols-outlined text-error text-[14px]" style="font-variation-settings:'FILL' 1;">campaign</span>
-          <span class="text-xs font-bold text-error">Appealed — Escalated to senior authorities</span>
-          ${issue.appealCount > 1 ? `<span class="ml-auto text-[10px] text-error font-bold">${issue.appealCount}x</span>` : ''}
+          <span class="text-xs font-bold text-error">Escalated to authorities</span>
+          <span class="ml-auto text-[10px] text-error font-bold">${issue.appealCount} appeal${issue.appealCount !== 1 ? 's' : ''}</span>
         </div>
+        ${appealButton}
       </div>`;
-  } else if (days > 3 && issue.status !== 'Resolved') {
     appealHtml = `<div class="mt-3 text-xs text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-[12px]">schedule</span> ${days} days open — appeal available in ${APPEAL_THRESHOLD_DAYS - days} more day${APPEAL_THRESHOLD_DAYS - days !== 1 ? 's' : ''}</div>`;
   }
 
