@@ -246,7 +246,7 @@ tailwind.config = {
       <div class="h-[2px] w-12 bg-surface-container-highest" id="step-bar-1"></div>
       <div class="flex items-center gap-3 shrink-0">
         <div class="w-10 h-10 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center font-bold font-headline" id="step2-indicator">2</div>
-        <span class="font-headline font-semibold text-sm text-on-surface-variant" id="step2-label">Evidence</span>
+        <span class="font-headline font-semibold text-sm text-on-surface-variant" id="step2-label">Photo (Required)</span>
       </div>
       <div class="h-[2px] w-12 bg-surface-container-highest" id="step-bar-2"></div>
       <div class="flex items-center gap-3 shrink-0">
@@ -359,12 +359,19 @@ tailwind.config = {
             <span class="material-symbols-outlined text-primary">add_a_photo</span>
             <h2 class="font-headline text-2xl font-bold tracking-tight">Visual Evidence</h2>
           </div>
+          <div class="bg-primary-fixed-dim/40 border border-primary/20 rounded-xl p-4 mb-6 flex items-start gap-3">
+            <span class="material-symbols-outlined text-primary text-[18px] mt-0.5" style="font-variation-settings:'FILL' 1;">info</span>
+            <div class="text-sm text-on-surface-variant">
+              <p class="font-semibold text-on-surface mb-1">📸 Photo must be related to the issue you reported.</p>
+              <p>Generic or unrelated images will not be accepted. Submit clear photos showing the actual problem: road damage, waste, flooding, broken lights, etc.</p>
+            </div>
+          </div>
           <div id="upload-zone" class="p-12 border-2 border-dashed border-outline-variant/50 rounded-2xl bg-surface-container-lowest flex flex-col items-center justify-center text-center group hover:border-primary/40 transition-colors cursor-pointer" onclick="document.getElementById('r-file').click()">
             <div id="upload-icon-area" class="w-20 h-20 rounded-full bg-primary-fixed flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
               <span class="material-symbols-outlined text-primary" style="font-size:40px;">upload_file</span>
             </div>
             <h3 class="font-headline font-bold text-on-surface mb-2 text-xl">Drag &amp; Drop Image</h3>
-            <p class="text-sm text-on-surface-variant mb-6 max-w-sm">High-resolution photos help us assess the severity. JPG or PNG under 10MB.</p>
+            <p class="text-sm text-on-surface-variant mb-6 max-w-sm">Upload a clear photo of the issue. High-resolution JPG or PNG under 10MB.</p>
             <input type="file" id="r-file" accept="image/*" class="hidden" onchange="handleFileUpload(event)"/>
             <button type="button" class="bg-surface-container-high px-8 py-3 rounded-md text-sm font-semibold hover:bg-surface-container-highest transition-colors">Browse Files</button>
           </div>
@@ -374,7 +381,7 @@ tailwind.config = {
               <span class="material-symbols-outlined text-sm">delete</span> Remove image
             </button>
           </div>
-          <p class="text-[11px] text-on-surface-variant italic mt-4 text-center">Uploading an image is optional but highly recommended.</p>
+          <p class="text-[11px] text-error font-semibold mt-4 text-center">⚠️ Image upload is REQUIRED to proceed.</p>
         </section>
         <div class="flex gap-4">
           <button type="button" onclick="goToStep1()" class="flex-1 bg-surface-container-high py-4 rounded-xl font-headline font-bold text-lg hover:bg-surface-container-highest transition-all flex items-center justify-center gap-2">
@@ -1045,6 +1052,10 @@ function goToStep2() {
 }
 
 function goToStep3() {
+  if (!uploadedImageData) {
+    showToast('Please upload a photo related to the issue. This helps us verify and resolve it faster.', 'warning');
+    return;
+  }
   currentStep = 3;
   document.getElementById('form-step-2').classList.add('hidden');
   document.getElementById('form-step-3').classList.remove('hidden');
